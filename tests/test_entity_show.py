@@ -13,7 +13,7 @@ runner = CliRunner()
 @pytest.fixture
 def sample_person_with_team(temp_data_dir, sample_team):
     """Person assigned to sample_team."""
-    person = Person(id="alice", name="Alice Smith", team_id="engineering", role="Developer")
+    person = Person(id="alice", name="Alice Smith", team_ids=["engineering"], role="Developer")
     storage.add_person(person)
     return person
 
@@ -32,9 +32,9 @@ def person_with_memory(temp_data_dir, sample_person):
 def team_with_members(temp_data_dir, sample_team):
     """Team with multiple members."""
     people = [
-        Person(id="member-1", name="Member One", team_id="engineering"),
-        Person(id="member-2", name="Member Two", team_id="engineering"),
-        Person(id="member-3", name="Member Three", team_id="engineering"),
+        Person(id="member-1", name="Member One", team_ids=["engineering"]),
+        Person(id="member-2", name="Member Two", team_ids=["engineering"]),
+        Person(id="member-3", name="Member Three", team_ids=["engineering"]),
     ]
     for p in people:
         storage.add_person(p)
@@ -60,7 +60,7 @@ class TestShowEntity:
 
         assert result.exit_code == 0
         assert "Alice Smith" in result.output
-        assert "Team:" in result.output
+        assert "Teams:" in result.output
         assert "Engineering Team" in result.output  # Team name, not just ID
 
     def test_show_person_with_memory(self, person_with_memory):
@@ -115,7 +115,7 @@ class TestShowEntity:
             id="full-person",
             name="Full Person",
             role="Manager",
-            team_id="engineering",
+            team_ids=["engineering"],
             tags=["python", "leadership"],
             calendar_patterns=["1:1 Full", "Full sync"],
             notion_page="https://notion.so/full",
@@ -172,8 +172,8 @@ class TestShowEntity:
         assert "Members:" not in result.output
 
     def test_show_person_with_orphaned_team_reference(self, temp_data_dir):
-        """Show person with invalid team_id handles gracefully."""
-        person = Person(id="orphan", name="Orphan User", team_id="ghost-team")
+        """Show person with invalid team_ids handles gracefully."""
+        person = Person(id="orphan", name="Orphan User", team_ids=["ghost-team"])
         storage.add_person(person)
 
         result = runner.invoke(app, ["entity", "show", "orphan"])

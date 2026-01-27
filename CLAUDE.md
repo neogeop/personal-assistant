@@ -14,8 +14,10 @@ This project uses a **two-plane model**:
 ### Data Model
 
 **Entities** (in `data/entities/`):
-- **Person**: Individual with id, name, role, team_id, tags, calendar_patterns, notion_page
+- **Person**: Individual with id, name, role, team_ids (list), tags, calendar_patterns, notion_page
 - **Team**: Group with id, name, team_type, calendar_patterns, notion_page
+
+**Note:** A person can belong to multiple teams. The `team_ids` field is a list of team IDs.
 
 **Mappings** (in `data/mappings/`):
 - **CalendarNotionMapping**: Links calendar event patterns to entities and their Notion pages
@@ -69,10 +71,15 @@ This eliminates the need to manually run `pa map add` after entity creation.
 ```bash
 # Entity management
 pa entity add person --name "John Doe" --role "Engineer"
+pa entity add person --name "Jane" --team engineering --team design  # Multiple teams
+pa entity add person --name "Bob" --team "eng,design"                 # Comma-separated
 pa entity add team --name "Platform" --type "engineering"
 pa entity list [people|teams]
 pa entity show <entity-id>
 pa entity update <entity-id> --role "Senior Engineer"
+pa entity update <entity-id> --add-team sales      # Add to a team
+pa entity update <entity-id> --remove-team design  # Remove from a team
+pa entity update <entity-id> --team "new-team"     # Replace all teams
 pa entity delete <entity-id>
 
 # Calendar-Notion mappings

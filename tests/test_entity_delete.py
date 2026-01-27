@@ -22,8 +22,8 @@ def person_with_memory(temp_data_dir, sample_person):
 def team_with_members(temp_data_dir, sample_team):
     """Team with multiple members."""
     people = [
-        Person(id="member-1", name="Member One", team_id="engineering"),
-        Person(id="member-2", name="Member Two", team_id="engineering"),
+        Person(id="member-1", name="Member One", team_ids=["engineering"]),
+        Person(id="member-2", name="Member Two", team_ids=["engineering"]),
     ]
     for p in people:
         storage.add_person(p)
@@ -202,24 +202,24 @@ class TestDeleteCascadeGaps:
     def test_show_orphaned_person_team_reference(self, sample_team):
         """Person with deleted team shows gracefully."""
         # Create person with team
-        person = Person(id="orphan", name="Orphan", team_id="engineering")
+        person = Person(id="orphan", name="Orphan", team_ids=["engineering"])
         storage.add_person(person)
 
         # Delete team directly (bypassing CLI constraint by manual file edit)
         # Actually need to first remove the person from team
-        storage.update_person("orphan", {"team_id": None})
+        storage.update_person("orphan", {"team_ids": []})
 
         # Now delete team
         result = runner.invoke(app, ["entity", "delete", "engineering", "--force"])
         assert result.exit_code == 0
 
-        # Manually set team_id back to simulate orphaned reference
+        # Manually set team_ids back to simulate orphaned reference
         # This simulates data corruption or external modification
         people = storage.load_people()
         for i, p in enumerate(people):
             if p.id == "orphan":
                 people[i] = Person(
-                    id="orphan", name="Orphan", team_id="engineering"
+                    id="orphan", name="Orphan", team_ids=["engineering"]
                 )
         storage.save_people(people)
 

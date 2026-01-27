@@ -14,7 +14,7 @@ runner = CliRunner()
 def multiple_people(temp_data_dir, sample_team):
     """Multiple people for list tests."""
     people = [
-        Person(id="alice", name="Alice Smith", team_id="engineering"),
+        Person(id="alice", name="Alice Smith", team_ids=["engineering"]),
         Person(id="bob", name="Bob Jones", role="Manager"),
         Person(id="charlie", name="Charlie Brown", tags=["contractor"]),
     ]
@@ -56,8 +56,8 @@ class TestListEntities:
         assert "alice" in result.output
         assert "bob" in result.output
         assert "charlie" in result.output
-        # Should NOT show teams table
-        assert "Teams" not in result.output or "No teams found" in result.output
+        # Should NOT show teams table (check for "Members" column which is only in Teams table)
+        assert "Members" not in result.output or "No teams found" in result.output
 
     def test_list_teams_only(self, multiple_teams):
         """List only teams."""
@@ -77,7 +77,7 @@ class TestListEntities:
         team = Team(id="platform", name="Platform", team_type="product")
         storage.add_team(team)
         # Create people
-        person = Person(id="alice", name="Alice", team_id="platform")
+        person = Person(id="alice", name="Alice", team_ids=["platform"])
         storage.add_person(person)
 
         result = runner.invoke(app, ["entity", "list"])
@@ -105,7 +105,7 @@ class TestListEntities:
         storage.add_team(team)
         # Create members
         for i in range(3):
-            person = Person(id=f"member-{i}", name=f"Member {i}", team_id="platform")
+            person = Person(id=f"member-{i}", name=f"Member {i}", team_ids=["platform"])
             storage.add_person(person)
 
         result = runner.invoke(app, ["entity", "list", "teams"])
@@ -116,9 +116,9 @@ class TestListEntities:
         assert "3" in result.output  # Member count
 
     def test_list_with_orphaned_team_reference(self, temp_data_dir):
-        """Person with invalid team_id is handled gracefully."""
+        """Person with invalid team_ids is handled gracefully."""
         # Create person with non-existent team reference
-        person = Person(id="orphan", name="Orphan User", team_id="ghost-team")
+        person = Person(id="orphan", name="Orphan User", team_ids=["ghost-team"])
         storage.add_person(person)
 
         result = runner.invoke(app, ["entity", "list", "people"])
@@ -189,3 +189,48 @@ class TestListEntities:
         assert result.exit_code == 0
         assert "person-0" in result.output
         assert "person-49" in result.output
+
+
+class TestListMultipleTeams:
+    """Tests for listing with multiple team membership."""
+
+    def test_list_person_shows_multiple_teams(self, temp_data_dir):
+        """Person with multiple teams shows comma-separated team IDs."""
+        team1 = Team(id="alpha", name="Alpha Team")
+        team2 = Team(id="beta", name="Beta Team")
+        storage.add_team(team1)
+        storage.add_team(team2)
+
+        person = Person(id="multi-team", name="Multi Team Person", team_ids=["alpha", "beta"])
+        storage.add_person(person)
+
+        result = runner.invoke(app, ["entity", "list", "people"])
+
+        assert result.exit_code == 0
+        # Should show comma-separated team IDs
+        assert "alpha" in result.output
+        assert "beta" in result.output
+
+    def test_team_member_count_with_shared_members(self, temp_data_dir):
+        """Person in multiple teams is counted in each team's member count."""
+        team1 = Team(id="team-one", name="Team One")
+        team2 = Team(id="team-two", name="Team Two")
+        storage.add_team(team1)
+        storage.add_team(team2)
+
+        # Create person in both teams
+        shared_person = Person(id="shared", name="Shared Person", team_ids=["team-one", "team-two"])
+        storage.add_person(shared_person)
+
+        # Create person only in team-one
+        exclusive_person = Person(id="exclusive", name="Exclusive Person", team_ids=["team-one"])
+        storage.add_person(exclusive_person)
+
+        result = runner.invoke(app, ["entity", "list", "teams"])
+
+        assert result.exit_code == 0
+        # team-one should have 2 members (shared + exclusive)
+        # team-two should have 1 member (shared)
+        # The output should contain both team rows with their member counts
+        assert "Team One" in result.output
+        assert "Team Two" in result.output

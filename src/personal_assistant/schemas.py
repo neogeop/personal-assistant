@@ -1,9 +1,9 @@
 """Pydantic schemas for entities, mappings, and memory."""
 
 import datetime
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Person(BaseModel):
@@ -12,10 +12,20 @@ class Person(BaseModel):
     id: str = Field(..., pattern=r"^[a-z0-9-]+$", description="Unique identifier (lowercase, alphanumeric, hyphens)")
     name: str = Field(..., min_length=1, description="Full name")
     role: str | None = Field(default=None, description="Job title or role")
-    team_id: str | None = Field(default=None, description="Reference to team ID")
+    team_ids: list[str] = Field(default_factory=list, description="References to team IDs")
     tags: list[str] = Field(default_factory=list, description="Tags for categorization")
     calendar_patterns: list[str] = Field(default_factory=list, description="Patterns to match in calendar events")
     notion_page: str | None = Field(default=None, description="Notion page URL or ID")
+
+    @model_validator(mode='before')
+    @classmethod
+    def migrate_team_id(cls, data: Any) -> Any:
+        """Migrate legacy team_id field to team_ids list."""
+        if isinstance(data, dict):
+            if 'team_id' in data and 'team_ids' not in data:
+                team_id = data.pop('team_id')
+                data['team_ids'] = [team_id] if team_id else []
+        return data
 
 
 class Team(BaseModel):

@@ -58,7 +58,7 @@ class TestAddPerson:
 
         assert result.exit_code == 0
         person = storage.get_person("jane")
-        assert person.team_id == "engineering"
+        assert person.team_ids == ["engineering"]
 
     def test_add_person_with_tags(self, temp_data_dir):
         """Add person with comma-separated tags."""
@@ -138,7 +138,7 @@ class TestAddPerson:
         person = storage.get_person("jane-doe")
         assert person.name == "Jane Doe"
         assert person.role == "Senior Engineer"
-        assert person.team_id == "engineering"
+        assert person.team_ids == ["engineering"]
         assert person.tags == ["python", "go"]
         assert person.calendar_patterns == ["1:1 Jane"]
         assert person.notion_page == "https://notion.so/jane"
@@ -554,3 +554,447 @@ class TestAutoSeedMappings:
         assert mappings[0].calendar_pattern == "George / George ☠️"
         # ID is slugified
         assert mappings[0].id == "george-george"
+
+
+class TestInteractiveMode:
+    """Tests for interactive entity add mode."""
+
+    def test_interactive_person_all_fields(self, temp_data_dir, sample_team):
+        """Interactive mode prompts for all person fields."""
+        # Input: name, accept default ID, role, team, tags, calendar patterns, notion
+        inputs = [
+            "Jane Doe",       # Name
+            "",               # ID (accept default jane-doe)
+            "Senior Engineer",  # Role
+            "engineering",    # Team ID
+            "python,senior",  # Tags
+            "1:1 Jane",       # Calendar patterns
+            "https://notion.so/jane",  # Notion
+        ]
+        result = runner.invoke(
+            app,
+            ["entity", "add", "person", "--interactive"],
+            input="\n".join(inputs) + "\n",
+        )
+
+        assert result.exit_code == 0
+        assert "Added person:" in result.output
+        assert "jane-doe" in result.output
+
+        person = storage.get_person("jane-doe")
+        assert person is not None
+        assert person.name == "Jane Doe"
+        assert person.role == "Senior Engineer"
+        assert person.team_ids == ["engineering"]
+        assert person.tags == ["python", "senior"]
+        assert person.calendar_patterns == ["1:1 Jane"]
+        assert person.notion_page == "https://notion.so/jane"
+
+    def test_interactive_person_skip_optional(self, temp_data_dir):
+        """Interactive mode allows skipping optional fields."""
+        # Input: name, accept ID, skip all optional fields
+        inputs = [
+            "Bob Smith",  # Name
+            "",           # ID (accept default)
+            "",           # Role (skip)
+            "",           # Team (skip)
+            "",           # Tags (skip)
+            "",           # Calendar patterns (skip)
+            "",           # Notion (skip)
+        ]
+        result = runner.invoke(
+            app,
+            ["entity", "add", "person", "-i"],
+            input="\n".join(inputs) + "\n",
+        )
+
+        assert result.exit_code == 0
+        assert "Added person:" in result.output
+
+        person = storage.get_person("bob-smith")
+        assert person is not None
+        assert person.name == "Bob Smith"
+        assert person.role is None
+        assert person.team_ids == []
+        assert person.tags == []
+        assert person.calendar_patterns == []
+        assert person.notion_page is None
+
+    def test_interactive_team_basic(self, temp_data_dir):
+        """Interactive mode for team creation."""
+        inputs = [
+            "Platform",       # Name
+            "",               # ID (accept default)
+            "engineering",    # Team type
+            "Platform sync",  # Calendar patterns
+            "https://notion.so/platform",  # Notion
+        ]
+        result = runner.invoke(
+            app,
+            ["entity", "add", "team", "--interactive"],
+            input="\n".join(inputs) + "\n",
+        )
+
+        assert result.exit_code == 0
+        assert "Added team:" in result.output
+        assert "platform" in result.output
+
+        team = storage.get_team("platform")
+        assert team is not None
+        assert team.name == "Platform"
+        assert team.team_type == "engineering"
+        assert team.calendar_patterns == ["Platform sync"]
+        assert team.notion_page == "https://notion.so/platform"
+
+    def test_interactive_team_skip_optional(self, temp_data_dir):
+        """Interactive team creation with skipped optional fields."""
+        inputs = [
+            "Design Team",  # Name
+            "",             # ID (accept default)
+            "",             # Team type (skip)
+            "",             # Calendar patterns (skip)
+            "",             # Notion (skip)
+        ]
+        result = runner.invoke(
+            app,
+            ["entity", "add", "team", "-i"],
+            input="\n".join(inputs) + "\n",
+        )
+
+        assert result.exit_code == 0
+        team = storage.get_team("design-team")
+        assert team is not None
+        assert team.team_type is None
+        assert team.calendar_patterns == []
+        assert team.notion_page is None
+
+    def test_interactive_with_prefilled_name(self, temp_data_dir):
+        """Prefilled --name skips the name prompt."""
+        # Only ID and optional fields needed (name already provided)
+        inputs = [
+            "",           # ID (accept default)
+            "",           # Role (skip)
+            "",           # Team (skip)
+            "",           # Tags (skip)
+            "",           # Calendar patterns (skip)
+            "",           # Notion (skip)
+        ]
+        result = runner.invoke(
+            app,
+            ["entity", "add", "person", "-i", "--name", "Prefilled Name"],
+            input="\n".join(inputs) + "\n",
+        )
+
+        assert result.exit_code == 0
+        person = storage.get_person("prefilled-name")
+        assert person is not None
+        assert person.name == "Prefilled Name"
+
+    def test_interactive_with_prefilled_id(self, temp_data_dir):
+        """Prefilled --id skips the ID prompt."""
+        inputs = [
+            "Custom Person",  # Name
+            "",               # Role (skip)
+            "",               # Team (skip)
+            "",               # Tags (skip)
+            "",               # Calendar patterns (skip)
+            "",               # Notion (skip)
+        ]
+        result = runner.invoke(
+            app,
+            ["entity", "add", "person", "-i", "--id", "custom-id"],
+            input="\n".join(inputs) + "\n",
+        )
+
+        assert result.exit_code == 0
+        person = storage.get_person("custom-id")
+        assert person is not None
+        assert person.name == "Custom Person"
+
+    def test_interactive_custom_id(self, temp_data_dir):
+        """User can override the suggested ID."""
+        inputs = [
+            "John Doe",      # Name
+            "jdoe",          # Custom ID (override default john-doe)
+            "",              # Role (skip)
+            "",              # Team (skip)
+            "",              # Tags (skip)
+            "",              # Calendar patterns (skip)
+            "",              # Notion (skip)
+        ]
+        result = runner.invoke(
+            app,
+            ["entity", "add", "person", "-i"],
+            input="\n".join(inputs) + "\n",
+        )
+
+        assert result.exit_code == 0
+        person = storage.get_person("jdoe")
+        assert person is not None
+        assert person.name == "John Doe"
+
+    def test_interactive_team_validation_error(self, temp_data_dir):
+        """Invalid team ID shows error."""
+        inputs = [
+            "Jane",           # Name
+            "",               # ID (accept default)
+            "",               # Role (skip)
+            "nonexistent",    # Invalid team ID
+        ]
+        result = runner.invoke(
+            app,
+            ["entity", "add", "person", "-i"],
+            input="\n".join(inputs) + "\n",
+        )
+
+        assert result.exit_code == 1
+        assert "Team 'nonexistent' does not exist" in result.output
+
+    def test_interactive_empty_name_reprompts(self, temp_data_dir):
+        """Empty name re-prompts the user."""
+        inputs = [
+            "",              # Empty name (will reprompt)
+            "Valid Name",    # Valid name on second try
+            "",              # ID (accept default)
+            "",              # Role (skip)
+            "",              # Team (skip)
+            "",              # Tags (skip)
+            "",              # Calendar patterns (skip)
+            "",              # Notion (skip)
+        ]
+        result = runner.invoke(
+            app,
+            ["entity", "add", "person", "-i"],
+            input="\n".join(inputs) + "\n",
+        )
+
+        assert result.exit_code == 0
+        assert "This field is required" in result.output
+        person = storage.get_person("valid-name")
+        assert person is not None
+
+    def test_interactive_creates_calendar_mappings(self, temp_data_dir):
+        """Interactive mode auto-creates calendar mappings."""
+        inputs = [
+            "Alice",             # Name
+            "",                  # ID (accept default)
+            "",                  # Role (skip)
+            "",                  # Team (skip)
+            "",                  # Tags (skip)
+            "1:1 Alice,Alice sync",  # Calendar patterns
+            "https://notion.so/alice",  # Notion
+        ]
+        result = runner.invoke(
+            app,
+            ["entity", "add", "person", "-i"],
+            input="\n".join(inputs) + "\n",
+        )
+
+        assert result.exit_code == 0
+        assert "Auto-created 2 calendar mapping" in result.output
+
+        mappings = storage.load_mappings()
+        assert len(mappings) == 2
+
+    def test_non_interactive_requires_name(self, temp_data_dir):
+        """Non-interactive mode fails without --name."""
+        result = runner.invoke(app, ["entity", "add", "person"])
+
+        assert result.exit_code == 1
+        assert "--name is required" in result.output
+
+    def test_non_interactive_still_works(self, temp_data_dir):
+        """Non-interactive mode still works as before."""
+        result = runner.invoke(
+            app,
+            ["entity", "add", "person", "--name", "Normal User", "--role", "Developer"],
+        )
+
+        assert result.exit_code == 0
+        person = storage.get_person("normal-user")
+        assert person is not None
+        assert person.role == "Developer"
+
+
+class TestMultipleTeams:
+    """Tests for multiple team membership feature."""
+
+    def test_add_person_with_multiple_teams_repeated_flag(self, temp_data_dir):
+        """Add person with multiple teams using repeated --team flags."""
+        # Create teams first
+        from personal_assistant.schemas import Team
+        storage.add_team(Team(id="engineering", name="Engineering"))
+        storage.add_team(Team(id="design", name="Design"))
+
+        result = runner.invoke(
+            app,
+            [
+                "entity", "add", "person",
+                "--name", "Multi Team Person",
+                "--team", "engineering",
+                "--team", "design",
+            ],
+        )
+
+        assert result.exit_code == 0
+        person = storage.get_person("multi-team-person")
+        assert person is not None
+        assert person.team_ids == ["engineering", "design"]
+
+    def test_add_person_with_multiple_teams_comma_separated(self, temp_data_dir):
+        """Add person with multiple teams using comma-separated values."""
+        from personal_assistant.schemas import Team
+        storage.add_team(Team(id="platform", name="Platform"))
+        storage.add_team(Team(id="infra", name="Infrastructure"))
+
+        result = runner.invoke(
+            app,
+            [
+                "entity", "add", "person",
+                "--name", "Comma Team Person",
+                "--team", "platform,infra",
+            ],
+        )
+
+        assert result.exit_code == 0
+        person = storage.get_person("comma-team-person")
+        assert person is not None
+        assert person.team_ids == ["platform", "infra"]
+
+    def test_add_person_with_mixed_team_input(self, temp_data_dir):
+        """Add person with mix of repeated and comma-separated teams."""
+        from personal_assistant.schemas import Team
+        storage.add_team(Team(id="alpha", name="Alpha"))
+        storage.add_team(Team(id="beta", name="Beta"))
+        storage.add_team(Team(id="gamma", name="Gamma"))
+
+        result = runner.invoke(
+            app,
+            [
+                "entity", "add", "person",
+                "--name", "Mixed Team Person",
+                "--team", "alpha,beta",
+                "--team", "gamma",
+            ],
+        )
+
+        assert result.exit_code == 0
+        person = storage.get_person("mixed-team-person")
+        assert person is not None
+        assert person.team_ids == ["alpha", "beta", "gamma"]
+
+    def test_add_person_invalid_team_in_list(self, temp_data_dir):
+        """Error when any team in list doesn't exist."""
+        from personal_assistant.schemas import Team
+        storage.add_team(Team(id="real-team", name="Real Team"))
+
+        result = runner.invoke(
+            app,
+            [
+                "entity", "add", "person",
+                "--name", "Bad Teams",
+                "--team", "real-team,fake-team",
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "Team 'fake-team' does not exist" in result.output
+
+    def test_add_person_no_teams(self, temp_data_dir):
+        """Add person without any teams."""
+        result = runner.invoke(
+            app,
+            ["entity", "add", "person", "--name", "No Teams Person"],
+        )
+
+        assert result.exit_code == 0
+        person = storage.get_person("no-teams-person")
+        assert person is not None
+        assert person.team_ids == []
+
+    def test_interactive_multiple_teams_comma_separated(self, temp_data_dir):
+        """Interactive mode accepts comma-separated team IDs."""
+        from personal_assistant.schemas import Team
+        storage.add_team(Team(id="team-a", name="Team A"))
+        storage.add_team(Team(id="team-b", name="Team B"))
+
+        inputs = [
+            "Multi Interactive",  # Name
+            "",                   # ID (accept default)
+            "",                   # Role (skip)
+            "team-a, team-b",     # Teams (comma-separated with spaces)
+            "",                   # Tags (skip)
+            "",                   # Calendar patterns (skip)
+            "",                   # Notion (skip)
+        ]
+        result = runner.invoke(
+            app,
+            ["entity", "add", "person", "-i"],
+            input="\n".join(inputs) + "\n",
+        )
+
+        assert result.exit_code == 0
+        person = storage.get_person("multi-interactive")
+        assert person is not None
+        assert person.team_ids == ["team-a", "team-b"]
+
+
+class TestLegacyMigration:
+    """Tests for migration from legacy team_id format."""
+
+    def test_migrate_team_id_to_team_ids(self):
+        """Legacy team_id field is migrated to team_ids list."""
+        from personal_assistant.schemas import Person
+
+        # Simulate loading legacy data with team_id
+        legacy_data = {
+            "id": "legacy-person",
+            "name": "Legacy Person",
+            "team_id": "old-team",
+        }
+
+        person = Person.model_validate(legacy_data)
+        assert person.team_ids == ["old-team"]
+        assert not hasattr(person, "team_id") or "team_id" not in person.model_fields
+
+    def test_migrate_null_team_id_to_empty_list(self):
+        """Legacy null team_id is migrated to empty list."""
+        from personal_assistant.schemas import Person
+
+        legacy_data = {
+            "id": "null-team-person",
+            "name": "Null Team Person",
+            "team_id": None,
+        }
+
+        person = Person.model_validate(legacy_data)
+        assert person.team_ids == []
+
+    def test_team_ids_takes_precedence_over_team_id(self):
+        """If both team_id and team_ids exist, team_ids is used."""
+        from personal_assistant.schemas import Person
+
+        # This shouldn't happen normally, but test the behavior
+        data = {
+            "id": "mixed-person",
+            "name": "Mixed Person",
+            "team_id": "old-team",
+            "team_ids": ["new-team-a", "new-team-b"],
+        }
+
+        person = Person.model_validate(data)
+        # team_ids takes precedence (validator only migrates if team_ids not present)
+        assert person.team_ids == ["new-team-a", "new-team-b"]
+
+    def test_new_format_works_directly(self):
+        """New team_ids format works without migration."""
+        from personal_assistant.schemas import Person
+
+        data = {
+            "id": "new-person",
+            "name": "New Person",
+            "team_ids": ["team-1", "team-2"],
+        }
+
+        person = Person.model_validate(data)
+        assert person.team_ids == ["team-1", "team-2"]

@@ -71,7 +71,7 @@ def temp_markdown_file(tmp_path: Path):
 @pytest.fixture
 def sample_person_with_team(temp_data_dir: Path, sample_team: Team):
     """Person assigned to sample_team."""
-    person = Person(id="alice", name="Alice Smith", team_id="engineering", role="Developer")
+    person = Person(id="alice", name="Alice Smith", team_ids=["engineering"], role="Developer")
     storage.add_person(person)
     return person
 
@@ -93,7 +93,7 @@ def sample_mapping(temp_data_dir: Path, sample_person: Person):
 def multiple_people(temp_data_dir: Path, sample_team: Team):
     """Multiple people for list/search tests."""
     people = [
-        Person(id="alice", name="Alice Smith", team_id="engineering"),
+        Person(id="alice", name="Alice Smith", team_ids=["engineering"]),
         Person(id="bob", name="Bob Jones", role="Manager"),
         Person(id="charlie", name="Charlie Brown", tags=["contractor"]),
     ]

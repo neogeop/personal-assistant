@@ -46,6 +46,43 @@ def slugify(name: str) -> str:
     return slug
 
 
+def _interactive_prompt(
+    prompt_text: str,
+    default: str = "",
+    required: bool = False,
+) -> str | None:
+    """Prompt for input with skip support.
+
+    Returns None if user skips (enters empty string) and not required.
+    For required fields, re-prompts until a value is provided.
+    """
+    while True:
+        if default:
+            display_prompt = f"{prompt_text} [{default}]"
+        elif required:
+            display_prompt = prompt_text
+        else:
+            display_prompt = f"{prompt_text} (skip with Enter)"
+
+        value = typer.prompt(display_prompt, default=default or "", show_default=False)
+
+        if not value and required:
+            rprint("[yellow]This field is required.[/yellow]")
+            continue
+
+        return value if value else None
+
+
+def _parse_teams(team_input: list[str] | None) -> list[str]:
+    """Parse team input, handling both multiple flags and comma-separated."""
+    if not team_input:
+        return []
+    teams = []
+    for item in team_input:
+        teams.extend(t.strip() for t in item.split(",") if t.strip())
+    return teams
+
+
 def _auto_create_mappings(
     patterns: list[str],
     entity_id: str,
@@ -88,8 +125,8 @@ def _auto_create_mappings(
 @entity_app.command("add")
 def entity_add(
     entity_type: Annotated[str, typer.Argument(help="Entity type: 'person' or 'team'")],
-    name: Annotated[str, typer.Option("--name", "-n", help="Name of the entity")],
-    team: Annotated[Optional[str], typer.Option("--team", "-t", help="Team ID (for person)")] = None,
+    name: Annotated[Optional[str], typer.Option("--name", "-n", help="Name of the entity")] = None,
+    team: Annotated[Optional[list[str]], typer.Option("--team", "-t", help="Team ID(s) - can be repeated or comma-separated")] = None,
     role: Annotated[Optional[str], typer.Option("--role", "-r", help="Role/title (for person)")] = None,
     entity_type_field: Annotated[
         Optional[str], typer.Option("--type", help="Team type (for team)")
@@ -100,9 +137,76 @@ def entity_add(
     ] = None,
     notion_page: Annotated[Optional[str], typer.Option("--notion", help="Notion page URL or ID")] = None,
     entity_id: Annotated[Optional[str], typer.Option("--id", help="Custom ID (default: derived from name)")] = None,
+    interactive: Annotated[bool, typer.Option("--interactive", "-i", help="Interactive mode - prompts for each field")] = False,
 ) -> None:
     """Add a new person or team."""
     storage.ensure_data_dirs()
+
+    # Validate entity type first
+    if entity_type not in ("person", "team"):
+        rprint(f"[red]Error:[/red] Unknown entity type '{entity_type}'. Use 'person' or 'team'.")
+        raise typer.Exit(1)
+
+    # Interactive mode: prompt for missing fields
+    if interactive:
+        rprint(f"\nEntity type: {entity_type}\n")
+
+        # Name is required - prompt if not provided
+        if name is None:
+            name = _interactive_prompt("Name", required=True)
+
+        # ID defaults to slugified name
+        if entity_id is None:
+            suggested_id = slugify(name)
+            entity_id = _interactive_prompt("ID", default=suggested_id) or suggested_id
+
+        if entity_type == "person":
+            # Person-specific fields
+            if role is None:
+                role = _interactive_prompt("Role")
+
+            if team is None:
+                team_input = _interactive_prompt("Team ID(s) (comma-separated)")
+                if team_input:
+                    team = [team_input]  # Will be parsed by _parse_teams
+                else:
+                    team = None
+                # Validate teams if provided
+                team_list = _parse_teams(team)
+                for t_id in team_list:
+                    if not storage.get_team(t_id):
+                        rprint(f"[red]Error:[/red] Team '{t_id}' does not exist. Create it first.")
+                        raise typer.Exit(1)
+
+            if tags is None:
+                tags_input = _interactive_prompt("Tags (comma-separated)")
+                tags = tags_input if tags_input else None
+
+            if calendar_patterns is None:
+                patterns_input = _interactive_prompt("Calendar patterns (comma-separated)")
+                calendar_patterns = patterns_input if patterns_input else None
+
+            if notion_page is None:
+                notion_page = _interactive_prompt("Notion page")
+
+        else:  # team
+            # Team-specific fields
+            if entity_type_field is None:
+                entity_type_field = _interactive_prompt("Team type")
+
+            if calendar_patterns is None:
+                patterns_input = _interactive_prompt("Calendar patterns (comma-separated)")
+                calendar_patterns = patterns_input if patterns_input else None
+
+            if notion_page is None:
+                notion_page = _interactive_prompt("Notion page")
+
+        rprint()  # Blank line before output
+
+    # Non-interactive mode requires name
+    if name is None:
+        rprint("[red]Error:[/red] --name is required (or use --interactive mode).")
+        raise typer.Exit(1)
 
     generated_id = entity_id or slugify(name)
     tag_list = [t.strip() for t in tags.split(",")] if tags else []
@@ -110,16 +214,18 @@ def entity_add(
 
     try:
         if entity_type == "person":
-            # Validate team reference
-            if team and not storage.get_team(team):
-                rprint(f"[red]Error:[/red] Team '{team}' does not exist. Create it first.")
-                raise typer.Exit(1)
+            # Parse and validate team references
+            team_list = _parse_teams(team)
+            for t_id in team_list:
+                if not storage.get_team(t_id):
+                    rprint(f"[red]Error:[/red] Team '{t_id}' does not exist. Create it first.")
+                    raise typer.Exit(1)
 
             person = Person(
                 id=generated_id,
                 name=name,
                 role=role,
-                team_id=team,
+                team_ids=team_list,
                 tags=tag_list,
                 calendar_patterns=pattern_list,
                 notion_page=notion_page,
@@ -146,10 +252,6 @@ def entity_add(
             if pattern_list:
                 _auto_create_mappings(pattern_list, team_entity.id, "team", notion_page)
 
-        else:
-            rprint(f"[red]Error:[/red] Unknown entity type '{entity_type}'. Use 'person' or 'team'.")
-            raise typer.Exit(1)
-
     except ValidationError as e:
         rprint(f"[red]Validation error:[/red] {e}")
         raise typer.Exit(1)
@@ -174,11 +276,11 @@ def entity_list(
             table.add_column("ID", style="cyan")
             table.add_column("Name")
             table.add_column("Role")
-            table.add_column("Team")
+            table.add_column("Teams")
             table.add_column("Tags")
 
             for p in people:
-                table.add_row(p.id, p.name, p.role or "", p.team_id or "", ", ".join(p.tags))
+                table.add_row(p.id, p.name, p.role or "", ", ".join(p.team_ids), ", ".join(p.tags))
             console.print(table)
         else:
             rprint("[dim]No people found.[/dim]")
@@ -194,7 +296,7 @@ def entity_list(
 
             people = storage.load_people()
             for t in teams:
-                member_count = len([p for p in people if p.team_id == t.id])
+                member_count = len([p for p in people if t.id in p.team_ids])
                 table.add_row(t.id, t.name, t.team_type or "", str(member_count))
             console.print(table)
         else:
@@ -215,10 +317,13 @@ def entity_show(
         rprint(f"  [dim]ID:[/dim] {person.id}")
         if person.role:
             rprint(f"  [dim]Role:[/dim] {person.role}")
-        if person.team_id:
-            team = storage.get_team(person.team_id)
-            team_name = team.name if team else person.team_id
-            rprint(f"  [dim]Team:[/dim] {team_name} ({person.team_id})")
+        if person.team_ids:
+            team_displays = []
+            for t_id in person.team_ids:
+                team = storage.get_team(t_id)
+                team_name = team.name if team else t_id
+                team_displays.append(f"{team_name} ({t_id})")
+            rprint(f"  [dim]Teams:[/dim] {', '.join(team_displays)}")
         if person.tags:
             rprint(f"  [dim]Tags:[/dim] {', '.join(person.tags)}")
         if person.calendar_patterns:
@@ -248,7 +353,7 @@ def entity_show(
 
         # Show members
         people = storage.load_people()
-        members = [p for p in people if p.team_id == team.id]
+        members = [p for p in people if team.id in p.team_ids]
         if members:
             rprint(f"\n[bold]Members:[/bold] ({len(members)})")
             for p in members:
@@ -270,7 +375,9 @@ def entity_show(
 def entity_update(
     entity_id: Annotated[str, typer.Argument(help="Entity ID to update")],
     name: Annotated[Optional[str], typer.Option("--name", "-n", help="New name")] = None,
-    team: Annotated[Optional[str], typer.Option("--team", "-t", help="New team ID")] = None,
+    team: Annotated[Optional[list[str]], typer.Option("--team", "-t", help="Replace all teams (can be repeated or comma-separated)")] = None,
+    add_team: Annotated[Optional[list[str]], typer.Option("--add-team", help="Add team(s) (can be repeated or comma-separated)")] = None,
+    remove_team: Annotated[Optional[list[str]], typer.Option("--remove-team", help="Remove team(s) (can be repeated or comma-separated)")] = None,
     role: Annotated[Optional[str], typer.Option("--role", "-r", help="New role")] = None,
     entity_type_field: Annotated[Optional[str], typer.Option("--type", help="New team type")] = None,
     tags: Annotated[Optional[str], typer.Option("--tags", help="New comma-separated tags (replaces existing)")] = None,
@@ -288,10 +395,33 @@ def entity_update(
         if name:
             updates["name"] = name
         if team:
-            if not storage.get_team(team):
-                rprint(f"[red]Error:[/red] Team '{team}' does not exist.")
-                raise typer.Exit(1)
-            updates["team_id"] = team
+            # Replace all teams
+            team_list = _parse_teams(team)
+            for t_id in team_list:
+                if not storage.get_team(t_id):
+                    rprint(f"[red]Error:[/red] Team '{t_id}' does not exist.")
+                    raise typer.Exit(1)
+            updates["team_ids"] = team_list
+        if add_team:
+            # Add teams to existing list
+            teams_to_add = _parse_teams(add_team)
+            for t_id in teams_to_add:
+                if not storage.get_team(t_id):
+                    rprint(f"[red]Error:[/red] Team '{t_id}' does not exist.")
+                    raise typer.Exit(1)
+            current_teams = list(person.team_ids)
+            for t_id in teams_to_add:
+                if t_id not in current_teams:
+                    current_teams.append(t_id)
+            updates["team_ids"] = current_teams
+        if remove_team:
+            # Remove teams from existing list
+            teams_to_remove = _parse_teams(remove_team)
+            current_teams = list(person.team_ids)
+            for t_id in teams_to_remove:
+                if t_id in current_teams:
+                    current_teams.remove(t_id)
+            updates["team_ids"] = current_teams
         if role:
             updates["role"] = role
         if notion_page:

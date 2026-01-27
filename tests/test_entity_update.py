@@ -63,7 +63,7 @@ class TestUpdatePerson:
 
         assert result.exit_code == 0
         person = storage.get_person("john-doe")
-        assert person.team_id == "engineering"
+        assert person.team_ids == ["engineering"]
 
     def test_update_person_notion(self, sample_person):
         """Update person Notion page."""
@@ -121,11 +121,11 @@ class TestUpdatePerson:
         person = storage.get_person("john-doe")
         assert person.name == "John Updated"
         assert person.role == "Tech Lead"
-        assert person.team_id == "engineering"
+        assert person.team_ids == ["engineering"]
 
     def test_update_person_change_team(self, sample_team, second_team):
         """Change person from one team to another."""
-        person = Person(id="mover", name="Team Mover", team_id="engineering")
+        person = Person(id="mover", name="Team Mover", team_ids=["engineering"])
         storage.add_person(person)
 
         result = runner.invoke(
@@ -134,7 +134,7 @@ class TestUpdatePerson:
 
         assert result.exit_code == 0
         updated = storage.get_person("mover")
-        assert updated.team_id == "design"
+        assert updated.team_ids == ["design"]
 
 
 class TestUpdateTeam:
@@ -275,7 +275,7 @@ class TestUpdatePreservesData:
 
     def test_update_preserves_team_relationship(self, sample_team):
         """Update name preserves team relationship."""
-        person = Person(id="team-member", name="Team Member", team_id="engineering")
+        person = Person(id="team-member", name="Team Member", team_ids=["engineering"])
         storage.add_person(person)
 
         result = runner.invoke(
@@ -284,7 +284,7 @@ class TestUpdatePreservesData:
 
         assert result.exit_code == 0
         updated = storage.get_person("team-member")
-        assert updated.team_id == "engineering"  # Preserved
+        assert updated.team_ids == ["engineering"]  # Preserved
         assert updated.role == "Lead"
 
     def test_update_preserves_tags(self, temp_data_dir):
@@ -333,3 +333,150 @@ class TestUpdatePreservesData:
         assert result.exit_code == 0
         updated = storage.get_person("notion-user")
         assert updated.notion_page == "https://notion.so/original"
+
+
+class TestUpdateTeamMembership:
+    """Tests for team add/remove operations on person entities."""
+
+    def test_add_team_to_person(self, temp_data_dir):
+        """Add a team to a person with no teams."""
+        team = Team(id="new-team", name="New Team")
+        storage.add_team(team)
+        person = Person(id="teamless", name="Teamless Person")
+        storage.add_person(person)
+
+        result = runner.invoke(
+            app, ["entity", "update", "teamless", "--add-team", "new-team"]
+        )
+
+        assert result.exit_code == 0
+        updated = storage.get_person("teamless")
+        assert updated.team_ids == ["new-team"]
+
+    def test_add_second_team_to_person(self, sample_team):
+        """Add a second team to a person already in one team."""
+        second_team = Team(id="second-team", name="Second Team")
+        storage.add_team(second_team)
+        person = Person(id="one-team", name="One Team Person", team_ids=["engineering"])
+        storage.add_person(person)
+
+        result = runner.invoke(
+            app, ["entity", "update", "one-team", "--add-team", "second-team"]
+        )
+
+        assert result.exit_code == 0
+        updated = storage.get_person("one-team")
+        assert updated.team_ids == ["engineering", "second-team"]
+
+    def test_add_duplicate_team_is_idempotent(self, sample_team):
+        """Adding a team the person is already in doesn't duplicate."""
+        person = Person(id="dupe-test", name="Dupe Test", team_ids=["engineering"])
+        storage.add_person(person)
+
+        result = runner.invoke(
+            app, ["entity", "update", "dupe-test", "--add-team", "engineering"]
+        )
+
+        assert result.exit_code == 0
+        updated = storage.get_person("dupe-test")
+        assert updated.team_ids == ["engineering"]
+        assert updated.team_ids.count("engineering") == 1
+
+    def test_add_multiple_teams_comma_separated(self, temp_data_dir):
+        """Add multiple teams via comma-separated value."""
+        storage.add_team(Team(id="team-x", name="Team X"))
+        storage.add_team(Team(id="team-y", name="Team Y"))
+        person = Person(id="multi-add", name="Multi Add")
+        storage.add_person(person)
+
+        result = runner.invoke(
+            app, ["entity", "update", "multi-add", "--add-team", "team-x,team-y"]
+        )
+
+        assert result.exit_code == 0
+        updated = storage.get_person("multi-add")
+        assert updated.team_ids == ["team-x", "team-y"]
+
+    def test_add_team_invalid_team_error(self, temp_data_dir):
+        """Error when adding non-existent team."""
+        person = Person(id="add-invalid", name="Add Invalid")
+        storage.add_person(person)
+
+        result = runner.invoke(
+            app, ["entity", "update", "add-invalid", "--add-team", "ghost-team"]
+        )
+
+        assert result.exit_code == 1
+        assert "Team 'ghost-team' does not exist" in result.output
+
+    def test_remove_team_from_person(self, sample_team):
+        """Remove a team from a person."""
+        person = Person(id="remove-test", name="Remove Test", team_ids=["engineering"])
+        storage.add_person(person)
+
+        result = runner.invoke(
+            app, ["entity", "update", "remove-test", "--remove-team", "engineering"]
+        )
+
+        assert result.exit_code == 0
+        updated = storage.get_person("remove-test")
+        assert updated.team_ids == []
+
+    def test_remove_one_of_multiple_teams(self, temp_data_dir):
+        """Remove one team, keep others."""
+        storage.add_team(Team(id="keep", name="Keep"))
+        storage.add_team(Team(id="remove", name="Remove"))
+        person = Person(id="partial-remove", name="Partial Remove", team_ids=["keep", "remove"])
+        storage.add_person(person)
+
+        result = runner.invoke(
+            app, ["entity", "update", "partial-remove", "--remove-team", "remove"]
+        )
+
+        assert result.exit_code == 0
+        updated = storage.get_person("partial-remove")
+        assert updated.team_ids == ["keep"]
+
+    def test_remove_nonexistent_team_is_idempotent(self, temp_data_dir):
+        """Removing a team the person is not in succeeds silently."""
+        person = Person(id="remove-none", name="Remove None", team_ids=[])
+        storage.add_person(person)
+
+        result = runner.invoke(
+            app, ["entity", "update", "remove-none", "--remove-team", "whatever"]
+        )
+
+        assert result.exit_code == 0
+        updated = storage.get_person("remove-none")
+        assert updated.team_ids == []
+
+    def test_replace_all_teams(self, temp_data_dir):
+        """Using --team replaces all existing teams."""
+        storage.add_team(Team(id="old-team", name="Old Team"))
+        storage.add_team(Team(id="new-team", name="New Team"))
+        person = Person(id="replace-all", name="Replace All", team_ids=["old-team"])
+        storage.add_person(person)
+
+        result = runner.invoke(
+            app, ["entity", "update", "replace-all", "--team", "new-team"]
+        )
+
+        assert result.exit_code == 0
+        updated = storage.get_person("replace-all")
+        assert updated.team_ids == ["new-team"]
+
+    def test_replace_with_multiple_teams(self, temp_data_dir):
+        """Using --team with multiple values replaces all."""
+        storage.add_team(Team(id="old", name="Old"))
+        storage.add_team(Team(id="new-a", name="New A"))
+        storage.add_team(Team(id="new-b", name="New B"))
+        person = Person(id="replace-multi", name="Replace Multi", team_ids=["old"])
+        storage.add_person(person)
+
+        result = runner.invoke(
+            app, ["entity", "update", "replace-multi", "--team", "new-a,new-b"]
+        )
+
+        assert result.exit_code == 0
+        updated = storage.get_person("replace-multi")
+        assert updated.team_ids == ["new-a", "new-b"]

@@ -100,7 +100,7 @@ class TestEntityLifecycle:
 
         # Verify initial state
         person = storage.get_person("bob")
-        assert person.team_id == "engineering"
+        assert person.team_ids == ["engineering"]
 
         # Update name
         result = runner.invoke(
@@ -110,7 +110,7 @@ class TestEntityLifecycle:
 
         # Verify relationship preserved
         person = storage.get_person("bob")
-        assert person.team_id == "engineering"
+        assert person.team_ids == ["engineering"]
         assert person.name == "Robert"
         assert person.role == "Lead"
 
@@ -351,7 +351,7 @@ class TestCrossCommandDependencies:
 
         person = storage.get_person("ivy")
         # default_team config is not used by entity add
-        assert person.team_id is None
+        assert person.team_ids == []
 
     def test_remember_requires_entity(self, temp_data_dir):
         """Remember command requires existing entity."""

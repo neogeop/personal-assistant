@@ -187,7 +187,7 @@ def delete_team(team_id: str) -> None:
     """Delete a team. Raises ValueError if not found or has members."""
     # Check for members
     people = load_people()
-    members = [p for p in people if p.team_id == team_id]
+    members = [p for p in people if team_id in p.team_ids]
     if members:
         member_names = ", ".join(p.name for p in members)
         raise ValueError(f"Cannot delete team '{team_id}': has members ({member_names})")
