@@ -46,6 +46,42 @@ def slugify(name: str) -> str:
     return slug
 
 
+def _auto_create_mappings(
+    patterns: list[str],
+    entity_id: str,
+    entity_type: str,
+    notion_page: str | None,
+) -> None:
+    """Auto-create calendar-notion mappings for entity patterns.
+
+    Creates a mapping for each calendar pattern provided during entity creation.
+    Silently skips patterns that would create duplicate mapping IDs.
+    """
+    mappings_created = 0
+    for pattern in patterns:
+        if not pattern:  # Skip empty patterns
+            continue
+        mapping_id = slugify(pattern)
+        if not mapping_id:  # Skip if slugify produces empty string
+            continue
+        try:
+            mapping = CalendarNotionMapping(
+                id=mapping_id,
+                calendar_pattern=pattern,
+                entity_id=entity_id,
+                entity_type=entity_type,
+                notion_page=notion_page,
+            )
+            storage.add_mapping(mapping)
+            mappings_created += 1
+        except ValueError:
+            # Mapping with this ID already exists, skip silently
+            pass
+
+    if mappings_created > 0:
+        rprint(f"[dim]Auto-created {mappings_created} calendar mapping(s)[/dim]")
+
+
 # --- Entity Commands ---
 
 
@@ -91,6 +127,10 @@ def entity_add(
             storage.add_person(person)
             rprint(f"[green]Added person:[/green] {person.id} ({person.name})")
 
+            # Auto-seed mappings for calendar patterns
+            if pattern_list:
+                _auto_create_mappings(pattern_list, person.id, "person", notion_page)
+
         elif entity_type == "team":
             team_entity = Team(
                 id=generated_id,
@@ -101,6 +141,10 @@ def entity_add(
             )
             storage.add_team(team_entity)
             rprint(f"[green]Added team:[/green] {team_entity.id} ({team_entity.name})")
+
+            # Auto-seed mappings for calendar patterns
+            if pattern_list:
+                _auto_create_mappings(pattern_list, team_entity.id, "team", notion_page)
 
         else:
             rprint(f"[red]Error:[/red] Unknown entity type '{entity_type}'. Use 'person' or 'team'.")

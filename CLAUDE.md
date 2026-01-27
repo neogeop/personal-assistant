@@ -31,6 +31,39 @@ This project uses a **two-plane model**:
 - **Google Calendar**: Fetch events, attendees, meeting times
 - **Notion**: Read meeting notes, action items, context
 
+### Data Directory Configuration
+
+The CLI stores data in a configurable directory:
+
+| Priority | Source | Default Value |
+|----------|--------|---------------|
+| 1 | `PA_DATA_DIR` environment variable | (none) |
+| 2 | `XDG_DATA_HOME/personal-assistant` | `~/.local/share/personal-assistant` |
+
+**Examples:**
+
+```bash
+# Use a custom directory
+export PA_DATA_DIR=~/my-pa-data
+pa entity list
+
+# Or inline
+PA_DATA_DIR=./data pa entity list
+```
+
+### Auto-Seeded Mappings
+
+When adding entities with `--calendar-patterns`, mappings are **automatically created**:
+
+```bash
+pa entity add person --name "John" --calendar-patterns "1:1 John,John sync" --notion "https://..."
+# Output:
+# Added person: john (John)
+# Auto-created 2 calendar mapping(s)
+```
+
+This eliminates the need to manually run `pa map add` after entity creation.
+
 ## CLI Commands
 
 ```bash

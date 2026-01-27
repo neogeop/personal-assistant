@@ -1,13 +1,32 @@
 """Storage layer for reading and writing YAML files."""
 
+import os
 from pathlib import Path
 
 import yaml
 
 from .schemas import CalendarNotionMapping, Config, Person, Team
 
-# Data directory relative to project root
-DATA_DIR = Path(__file__).parent.parent.parent / "data"
+
+def _get_data_dir() -> Path:
+    """Determine the data directory with the following priority:
+
+    1. PA_DATA_DIR environment variable (explicit override)
+    2. XDG_DATA_HOME/personal-assistant (defaults to ~/.local/share/personal-assistant)
+
+    Returns:
+        Path to the data directory
+    """
+    # 1. Explicit environment variable
+    if env_dir := os.environ.get("PA_DATA_DIR"):
+        return Path(env_dir)
+
+    # 2. XDG standard (works on Linux/macOS)
+    xdg_data_home = os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")
+    return Path(xdg_data_home) / "personal-assistant"
+
+
+DATA_DIR = _get_data_dir()
 
 
 def ensure_data_dirs() -> None:
