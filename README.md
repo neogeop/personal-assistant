@@ -197,7 +197,9 @@ personal-assistant/
 │   ├── schemas.py       # Pydantic models
 │   └── storage.py       # YAML file operations
 ├── data/                # Data storage (gitignored)
-├── adr/                 # Architecture Decision Records
+├── docs/
+│   ├── adr/             # Architecture Decision Records
+│   ├── PRD.md           # Product Requirements Document
 ├── tests/               # Test files
 ├── pyproject.toml       # Project configuration
 └── README.md
