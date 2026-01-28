@@ -1,218 +1,88 @@
-# Skill: Prepare Meeting
+# Prepare Meeting
 
-Prepare context for a meeting with a specific person or team.
+**Input:** `entity_id` - person or team ID (e.g., "john-doe", "platform-team")
 
-## Input
-
-- `entity_id`: The ID of the person or team (e.g., "john-doe", "platform-team")
-
-## Instructions
-
-Follow these steps in order:
+## Steps
 
 ### Step 1: Look Up Entity
 
-1. Read `data/entities/people.yaml` and search for an entity with matching `id`
-2. If not found in people, read `data/entities/teams.yaml` and search there
-3. If still not found, report error: "Entity '{entity_id}' not found"
+1. Read `data/entities/people.yaml` and search for matching `id`
+2. If not found, check `data/entities/teams.yaml`
+3. If still not found, abort: "Entity not found. Run `pa entity list`."
 4. Record entity type: "person" or "team"
 
 ### Step 2: Fetch Notion Page
 
-1. Check if the entity has a `notion_page` field set
-2. If yes, use the Notion MCP tool to fetch the page content:
-   - Use `mcp__notion__notion-fetch` with the page URL/ID
-3. If no Notion page is set, skip to Step 5
+1. If entity has `notion_page` field, use `mcp__notion__notion-fetch` with the page URL/ID
+2. If no Notion page configured, skip to Step 4
 
 ### Step 2.5: Extract Tasks from Inline Databases
 
 If Notion page was fetched successfully:
 
-1. **Detect inline databases**:
-   - Search for `<database>` tags with `inline="true"` attribute
-   - Extract the `data-source-url` collection UUID (format: `collection://UUID`)
-   - Note the database name from the tag content
-
-2. **Filter relevant databases**:
-   - Only process databases with task-related names: "Items", "Tasks", "Actions", "Backlog"
-   - Skip reference databases (e.g., "Members", "Projects")
-
-3. **Query each relevant database**:
-   - Use `mcp__notion__notion-search` with `data_source_url` parameter:
-     ```
-     {
-       "query": "status not started in progress",
-       "data_source_url": "collection://{uuid}"
-     }
-     ```
-
-4. **Parse and rank items by impact** (impact-dominant scoring):
+1. **Detect inline databases**: Search for `<database>` tags with `inline="true"` attribute, extract `data-source-url` UUID
+2. **Filter relevant databases**: Only "Items", "Tasks", "Actions", "Backlog" (skip "Members", "Projects")
+3. **Query each database** using `mcp__notion__notion-search`:
    ```
-   score = (0.15 * status_score) + (0.60 * impact_score) + (0.10 * recency_score) + (0.15 * due_date_score)
-
-   status_score:   "In Progress" = 1.0, "Not Started" = 0.7
-   impact_score:   "High"/"Critical" = 1.0, "Medium" = 0.6, "Low" = 0.3, default = 0.1
-   recency_score:  Created <7 days = 1.0, <30 days = 0.7, older = 0.3
-   due_date_score: Overdue = 1.0, Due <7 days = 0.8, Due later = 0.5, No date = 0.3
+   { "query": "status not started in progress", "data_source_url": "collection://{uuid}" }
    ```
+4. **Rank by impact** (impact-dominant scoring):
+   ```
+   score = (0.15 * status) + (0.60 * impact) + (0.10 * recency) + (0.15 * due_date)
 
+   status:   "In Progress" = 1.0, "Not Started" = 0.7
+   impact:   "High"/"Critical" = 1.0, "Medium" = 0.6, "Low" = 0.3, default = 0.1
+   recency:  <7 days = 1.0, <30 days = 0.7, older = 0.3
+   due_date: Overdue = 1.0, <7 days = 0.8, later = 0.5, none = 0.3
+   ```
 5. **Select top 5 items by score**
 
-### Step 3: Parse Meeting Sections
+### Step 3: Parse Meetings & Extract Actions
 
 From the Notion page content, extract the last 3-5 meeting sections:
 
 1. Look for date patterns: `<mention-date start="YYYY-MM-DD"/>` or date headers
-2. For each meeting section found, extract:
+2. For each meeting section, extract:
    - **Date**: The meeting date
-   - **Topics**: Items discussed (look for "Topics" subsection or bullet points)
-   - **Actions**: Action items with their status
+   - **Topics**: Items discussed (bullet points or "Topics" subsection)
+   - **Open actions**: `- [ ]` items with assignee if present (`<mention-user>` or `[GP]`)
+3. Compile open actions sorted by date (oldest first - these need attention)
 
-**Parsing rules:**
-- `- [ ]` = Open action item
-- `- [x]` = Completed action item
-- Look for assignee patterns like `<mention-user>` or prefixes like `[GP]`, `[KK]`
-- Extract the last 3-5 meetings (most recent first)
+### Step 4: Load Local Memory
 
-### Step 4: Extract Open Actions
+1. Check for memory directory: `data/memory/{people|teams}/{entity_id}/`
+2. Read all `.md` files, extract observations, notes, and inferences with dates
 
-From the parsed meetings, compile a list of all open actions:
-
-1. Collect all `- [ ]` items from the last 3-5 meetings
-2. Include the date when each action was created
-3. Include the assignee if identifiable
-4. Sort by date (oldest first, as these need attention)
-
-### Step 5: Load Local Memory
-
-1. Check if memory directory exists: `data/memory/people/{entity_id}/` or `data/memory/teams/{entity_id}/`
-2. Read all `.md` files in the directory
-3. Extract key observations, notes, and inferences
-4. Note the dates of each memory entry
-
-### Step 6: Calculate Confidence Score
-
-Calculate confidence based on available data:
+### Step 5: Calculate Confidence Score
 
 ```
 confidence = 0.0
 
-# Notion data
-if notion_page_set:
-    confidence += 0.1
-if notion_page_fetched_successfully:
-    confidence += 0.1
-if meetings_found >= 3:
-    confidence += 0.2
-elif meetings_found >= 1:
-    confidence += 0.1
+if notion_page_fetched:         confidence += 0.25
+if meetings_found >= 3:         confidence += 0.15
+if database_tasks_found:        confidence += 0.15
+if last_meeting_within_2_weeks: confidence += 0.20
+if open_actions_found:          confidence += 0.10
+if memory_entries_found:        confidence += 0.25
 
-# Inline database tasks
-if inline_database_found:
-    confidence += 0.05
-if database_tasks_extracted:
-    confidence += 0.08
-if high_impact_tasks_found:
-    confidence += 0.05
-
-# Recency
-if last_meeting_within_2_weeks:
-    confidence += 0.2
-elif last_meeting_within_4_weeks:
-    confidence += 0.1
-
-# Actions
-if open_actions_found:
-    confidence += 0.1
-
-# Local memory
-if memory_entries_found:
-    confidence += 0.2
-
-# Normalize to max 1.0
 confidence = min(1.0, confidence)
 ```
 
-**Confidence levels:**
-- 0.0-0.4: Low
-- 0.5-0.7: Medium
-- 0.8-1.0: High
+**Levels:** Low (0-0.4), Medium (0.5-0.7), High (0.8-1.0)
 
-### Step 7: Generate Suggested Topics
+### Step 6: Generate Suggested Topics
 
-Based on the collected context, suggest topics for the meeting:
+Prioritize topics in this order:
+1. **High-impact database tasks** that need discussion
+2. Open checkbox actions needing follow-up
+3. Recurring themes from recent meetings
+4. Observations from local memory not yet discussed
+5. General check-in (if >2 weeks since last meeting)
 
-1. Start with **high-impact database tasks** that need discussion (highest priority)
-2. Follow with open checkbox actions that need follow-up
-3. Add any recurring themes from recent meetings
-4. Include observations from local memory that haven't been discussed
-5. If it's been a while since the last meeting, suggest a general check-in
+## Output
 
-## Output Format
+Format (example for `john-doe`):
 
-```markdown
-## Meeting Prep: {entity_name}
-
-**Entity:** {entity_id} ({role_or_type})
-**Team:** {team_name} (if applicable)
-**Notion:** [{page_title}]({notion_url}) OR Not configured
-
-### High-Impact Database Tasks ({count})
-*Source: {database_name}*
-
-| Rank | Task | Status | Impact | Due |
-|------|------|--------|--------|-----|
-| 1 | {task_title} | {status} | {impact} | {due_date} |
-| 2 | {task_title} | {status} | {impact} | {due_date} |
-...
-
-> Items ranked by impact. Showing "In Progress" and "Not Started" tasks.
-
-### Open Actions ({count})
-- [ ] {action_text} (from {date})
-- [ ] {action_text} (from {date})
-...
-
-### Recent Meetings (last {n})
-- **{date}**: {brief_topic_summary}
-- **{date}**: {brief_topic_summary}
-...
-
-### Local Memory ({count} entries)
-- **{date}**: {observation_summary}
-- **{date}**: {observation_summary}
-...
-
-### Suggested Topics
-1. {topic_suggestion}
-2. {topic_suggestion}
-3. {topic_suggestion}
-
----
-
-**Confidence:** {score} ({level})
-- Notion: {status}
-- Recent meetings: {count} found
-- Local memory: {count} entries
-```
-
-## Error Handling
-
-| Error | Response |
-|-------|----------|
-| Entity not found | "Entity '{entity_id}' not found. Use `pa entity list` to see available entities." |
-| Notion fetch failed | Continue without Notion data, note in output, reduce confidence |
-| No Notion page configured | Skip Notion steps, note "Notion page not configured" |
-| Inline database query failed | Continue without database tasks, note in output |
-| No relevant databases found | Skip High-Impact Database Tasks section |
-| Database has no matching items | Note "No open tasks in {database_name}" |
-| No memory entries | Show "No local memory entries" |
-
-## Example
-
-Input: `/prepare meeting john-doe`
-
-Output:
 ```markdown
 ## Meeting Prep: John Doe
 
@@ -220,7 +90,7 @@ Output:
 **Team:** Platform
 **Notion:** [John Doe / Georgios](https://notion.so/abc123)
 
-### High-Impact Database Tasks (3)
+### High-Impact Tasks (3)
 *Source: Items*
 
 | Rank | Task | Status | Impact | Due |
@@ -229,33 +99,41 @@ Output:
 | 2 | Review security audit findings | Not Started | High | 2026-01-30 |
 | 3 | Update team onboarding docs | In Progress | Medium | 2026-02-05 |
 
-> Items ranked by impact. Showing "In Progress" and "Not Started" tasks.
-
 ### Open Actions (3)
-- [ ] Follow up on ML team exploration (from 2026-01-20)
-- [ ] Share RFC draft (from 2026-01-13)
-- [ ] Schedule design review (from 2026-01-13)
+- [ ] Follow up on ML team exploration (2026-01-20)
+- [ ] Share RFC draft (2026-01-13)
+- [ ] Schedule design review (2026-01-13)
 
 ### Recent Meetings (last 3)
-- **2026-01-20**: Product team attrition, Appsmith rollout discussion
+- **2026-01-20**: Product team attrition, Appsmith rollout
 - **2026-01-13**: RFC review, Transfer ins involvement
 - **2025-12-16**: Q1 planning, collaboration with Angie's team
 
 ### Local Memory (2 entries)
-- **2026-01-15**: Expressed interest in moving to ML team
-- **2025-12-01**: Strong debugging skills, helped with production incident
+- **2026-01-15**: Interested in moving to ML team
+- **2025-12-01**: Strong debugging skills, helped with incident
 
 ### Suggested Topics
-1. Discuss API migration plan status and blockers (High Impact)
-2. Review security audit findings before deadline (High Impact)
-3. Follow up on ML team exploration - any updates?
-4. Check status of RFC draft and design review scheduling
+1. API migration status and blockers (High Impact)
+2. Security audit findings before deadline (High Impact)
+3. ML team exploration - any updates?
+4. RFC draft and design review scheduling
 
 ---
-
 **Confidence:** 0.85 (High)
-- Notion: Page fetched, 3 recent meetings
-- Database tasks: 3 high-impact items from "Items"
-- Recent meetings: Last meeting 7 days ago
-- Local memory: 2 observations
 ```
+
+## Errors
+
+| Error | Response |
+|-------|----------|
+| Entity not found | Abort: "Entity not found. Run `pa entity list`." |
+| Notion/database unavailable | Continue without; note in output |
+| No memory entries | Show "No local memory" |
+| No database tasks | Skip High-Impact Tasks section |
+
+## Tips
+
+- Run 15-30 minutes before the meeting for best context
+- If Notion page missing, add via `pa entity update <id> --notion <url>`
+- High-impact tasks surface items from inline databases named "Items", "Tasks", "Actions"

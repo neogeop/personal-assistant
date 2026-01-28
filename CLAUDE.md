@@ -115,11 +115,10 @@ Prepare context for a meeting with a specific person or team.
 **What it does:**
 1. Looks up entity from `data/entities/`
 2. Fetches their Notion page via MCP
-3. Parses recent meeting sections (last 3-5 meetings)
-4. Extracts open action items (unchecked boxes)
+3. Extracts high-impact tasks from inline Notion databases (Items, Tasks, Actions)
+4. Parses recent meetings and extracts open actions
 5. Reads local memory observations
-6. Checks calendar for next meeting time
-7. Synthesizes context with confidence scoring
+6. Synthesizes context with confidence scoring
 
 **Skill file:** `data/skills/prepare-meeting.md`
 
@@ -166,17 +165,14 @@ All skill outputs include a confidence score (0.0-1.0) based on:
 
 | Factor | Weight | Description |
 |--------|--------|-------------|
-| Notion page found | +0.2 | Entity has linked Notion page that was fetched |
-| Recent meetings | +0.2 | Last meeting within 2 weeks |
-| Open actions extracted | +0.1 | Found unchecked action items |
-| Local memory present | +0.2 | Has observations in memory directory |
-| Calendar match found | +0.1 | Next meeting found in calendar |
-| Multiple sources agree | +0.2 | Corroboration across data sources |
+| Notion page fetched | +0.25 | Entity has linked Notion page that was fetched |
+| Meetings found (3+) | +0.15 | Found at least 3 meeting sections |
+| Database tasks found | +0.15 | Found tasks in inline Notion databases |
+| Recent meeting | +0.20 | Last meeting within 2 weeks |
+| Open actions found | +0.10 | Found unchecked action items |
+| Memory entries found | +0.25 | Has observations in memory directory |
 
-**Display thresholds:**
-- 0.0-0.4: Low confidence
-- 0.5-0.7: Medium confidence
-- 0.8-1.0: High confidence
+**Levels:** Low (0-0.4), Medium (0.5-0.7), High (0.8-1.0)
 
 ## Data Directory Structure
 
