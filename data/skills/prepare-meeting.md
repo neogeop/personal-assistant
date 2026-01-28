@@ -17,21 +17,48 @@ Follow these steps in order:
 3. If still not found, report error: "Entity '{entity_id}' not found"
 4. Record entity type: "person" or "team"
 
-### Step 2: Check Calendar for Next Meeting
-
-1. Use the Google Calendar MCP tool to list today's events
-2. For each event, check if the title matches any of the entity's `calendar_patterns`
-3. If a match is found, record the meeting time
-4. If no calendar match, note "No upcoming meeting found in calendar"
-
-### Step 3: Fetch Notion Page
+### Step 2: Fetch Notion Page
 
 1. Check if the entity has a `notion_page` field set
 2. If yes, use the Notion MCP tool to fetch the page content:
    - Use `mcp__notion__notion-fetch` with the page URL/ID
-3. If no Notion page is set, skip to Step 6
+3. If no Notion page is set, skip to Step 5
 
-### Step 4: Parse Meeting Sections
+### Step 2.5: Extract Tasks from Inline Databases
+
+If Notion page was fetched successfully:
+
+1. **Detect inline databases**:
+   - Search for `<database>` tags with `inline="true"` attribute
+   - Extract the `data-source-url` collection UUID (format: `collection://UUID`)
+   - Note the database name from the tag content
+
+2. **Filter relevant databases**:
+   - Only process databases with task-related names: "Items", "Tasks", "Actions", "Backlog"
+   - Skip reference databases (e.g., "Members", "Projects")
+
+3. **Query each relevant database**:
+   - Use `mcp__notion__notion-search` with `data_source_url` parameter:
+     ```
+     {
+       "query": "status not started in progress",
+       "data_source_url": "collection://{uuid}"
+     }
+     ```
+
+4. **Parse and rank items by impact** (impact-dominant scoring):
+   ```
+   score = (0.15 * status_score) + (0.60 * impact_score) + (0.10 * recency_score) + (0.15 * due_date_score)
+
+   status_score:   "In Progress" = 1.0, "Not Started" = 0.7
+   impact_score:   "High"/"Critical" = 1.0, "Medium" = 0.6, "Low" = 0.3, default = 0.1
+   recency_score:  Created <7 days = 1.0, <30 days = 0.7, older = 0.3
+   due_date_score: Overdue = 1.0, Due <7 days = 0.8, Due later = 0.5, No date = 0.3
+   ```
+
+5. **Select top 5 items by score**
+
+### Step 3: Parse Meeting Sections
 
 From the Notion page content, extract the last 3-5 meeting sections:
 
@@ -47,7 +74,7 @@ From the Notion page content, extract the last 3-5 meeting sections:
 - Look for assignee patterns like `<mention-user>` or prefixes like `[GP]`, `[KK]`
 - Extract the last 3-5 meetings (most recent first)
 
-### Step 5: Extract Open Actions
+### Step 4: Extract Open Actions
 
 From the parsed meetings, compile a list of all open actions:
 
@@ -56,14 +83,14 @@ From the parsed meetings, compile a list of all open actions:
 3. Include the assignee if identifiable
 4. Sort by date (oldest first, as these need attention)
 
-### Step 6: Load Local Memory
+### Step 5: Load Local Memory
 
 1. Check if memory directory exists: `data/memory/people/{entity_id}/` or `data/memory/teams/{entity_id}/`
 2. Read all `.md` files in the directory
 3. Extract key observations, notes, and inferences
 4. Note the dates of each memory entry
 
-### Step 7: Calculate Confidence Score
+### Step 6: Calculate Confidence Score
 
 Calculate confidence based on available data:
 
@@ -80,6 +107,14 @@ if meetings_found >= 3:
 elif meetings_found >= 1:
     confidence += 0.1
 
+# Inline database tasks
+if inline_database_found:
+    confidence += 0.05
+if database_tasks_extracted:
+    confidence += 0.08
+if high_impact_tasks_found:
+    confidence += 0.05
+
 # Recency
 if last_meeting_within_2_weeks:
     confidence += 0.2
@@ -94,9 +129,8 @@ if open_actions_found:
 if memory_entries_found:
     confidence += 0.2
 
-# Calendar
-if calendar_match_found:
-    confidence += 0.1
+# Normalize to max 1.0
+confidence = min(1.0, confidence)
 ```
 
 **Confidence levels:**
@@ -104,14 +138,15 @@ if calendar_match_found:
 - 0.5-0.7: Medium
 - 0.8-1.0: High
 
-### Step 8: Generate Suggested Topics
+### Step 7: Generate Suggested Topics
 
 Based on the collected context, suggest topics for the meeting:
 
-1. Start with open actions that need follow-up
-2. Add any recurring themes from recent meetings
-3. Include observations from local memory that haven't been discussed
-4. If it's been a while since the last meeting, suggest a general check-in
+1. Start with **high-impact database tasks** that need discussion (highest priority)
+2. Follow with open checkbox actions that need follow-up
+3. Add any recurring themes from recent meetings
+4. Include observations from local memory that haven't been discussed
+5. If it's been a while since the last meeting, suggest a general check-in
 
 ## Output Format
 
@@ -120,8 +155,18 @@ Based on the collected context, suggest topics for the meeting:
 
 **Entity:** {entity_id} ({role_or_type})
 **Team:** {team_name} (if applicable)
-**Next meeting:** {time} (from calendar) OR No upcoming meeting found
 **Notion:** [{page_title}]({notion_url}) OR Not configured
+
+### High-Impact Database Tasks ({count})
+*Source: {database_name}*
+
+| Rank | Task | Status | Impact | Due |
+|------|------|--------|--------|-----|
+| 1 | {task_title} | {status} | {impact} | {due_date} |
+| 2 | {task_title} | {status} | {impact} | {due_date} |
+...
+
+> Items ranked by impact. Showing "In Progress" and "Not Started" tasks.
 
 ### Open Actions ({count})
 - [ ] {action_text} (from {date})
@@ -149,7 +194,6 @@ Based on the collected context, suggest topics for the meeting:
 - Notion: {status}
 - Recent meetings: {count} found
 - Local memory: {count} entries
-- Calendar: {status}
 ```
 
 ## Error Handling
@@ -159,8 +203,10 @@ Based on the collected context, suggest topics for the meeting:
 | Entity not found | "Entity '{entity_id}' not found. Use `pa entity list` to see available entities." |
 | Notion fetch failed | Continue without Notion data, note in output, reduce confidence |
 | No Notion page configured | Skip Notion steps, note "Notion page not configured" |
+| Inline database query failed | Continue without database tasks, note in output |
+| No relevant databases found | Skip High-Impact Database Tasks section |
+| Database has no matching items | Note "No open tasks in {database_name}" |
 | No memory entries | Show "No local memory entries" |
-| Calendar MCP unavailable | Skip calendar check, note in output |
 
 ## Example
 
@@ -172,8 +218,18 @@ Output:
 
 **Entity:** john-doe (Senior Engineer)
 **Team:** Platform
-**Next meeting:** Today 10:00 AM
 **Notion:** [John Doe / Georgios](https://notion.so/abc123)
+
+### High-Impact Database Tasks (3)
+*Source: Items*
+
+| Rank | Task | Status | Impact | Due |
+|------|------|--------|--------|-----|
+| 1 | Finalize API migration plan | In Progress | High | 2026-01-28 |
+| 2 | Review security audit findings | Not Started | High | 2026-01-30 |
+| 3 | Update team onboarding docs | In Progress | Medium | 2026-02-05 |
+
+> Items ranked by impact. Showing "In Progress" and "Not Started" tasks.
 
 ### Open Actions (3)
 - [ ] Follow up on ML team exploration (from 2026-01-20)
@@ -190,15 +246,16 @@ Output:
 - **2025-12-01**: Strong debugging skills, helped with production incident
 
 ### Suggested Topics
-1. Follow up on ML team exploration - any updates?
-2. Check status of RFC draft and design review scheduling
-3. Discuss current project priorities
+1. Discuss API migration plan status and blockers (High Impact)
+2. Review security audit findings before deadline (High Impact)
+3. Follow up on ML team exploration - any updates?
+4. Check status of RFC draft and design review scheduling
 
 ---
 
 **Confidence:** 0.85 (High)
 - Notion: Page fetched, 3 recent meetings
+- Database tasks: 3 high-impact items from "Items"
 - Recent meetings: Last meeting 7 days ago
 - Local memory: 2 observations
-- Calendar: Next meeting found today
 ```
